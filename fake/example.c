@@ -17,6 +17,11 @@ void thread_func_2(void) {
 	fput(p1);
 }
 
+void child_thread_func(void) {
+	fpromise *p = &fp1;
+	fget(p);
+}
+
 void thread_func_3(void) {
 	fpromise *p3 = &fp3;
 	fput(p3);
@@ -24,9 +29,8 @@ void thread_func_3(void) {
 	p = &fp3;
 	fget(p);
 	fpromise *p1 = &fp1;
-	fpromise *p2 = &fp2;
 	fput(p1);
-	fput(p2);
+	start_fthread(child_thread_func);
 }
 
 int main(void) {

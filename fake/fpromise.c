@@ -1,7 +1,7 @@
 #include "fpromise.h"
 
-void fput(fpromise *fp) {
+void fput(fpromise *p) {
 }
 
-void fget(fpromise *fp) {
+void fget(fpromise *p) {
 }
