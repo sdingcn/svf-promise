@@ -1,11 +1,10 @@
 #ifndef FPROMISE_H
 #define FPROMISE_H
 
-class fpromise {
-};
+typedef struct {} fpromise;
 
-void fput(fpromise *p);
+void fput(fpromise *fp);
 
-void fget(fpromise *p);
+void fget(fpromise *fp);
 
 #endif
