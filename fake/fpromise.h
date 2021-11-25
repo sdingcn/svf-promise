@@ -1,13 +1,11 @@
-#ifndef FPROMISELIB_H
-#define FPROMISELIB_H
+#ifndef FPROMISE_H
+#define FPROMISE_H
 
 class fpromise {
 };
 
-void fput(fake_promise *p) {
-}
+void fput(fpromise *p);
 
-void fget(fake_promise *p) {
-}
+void fget(fpromise *p);
 
 #endif
