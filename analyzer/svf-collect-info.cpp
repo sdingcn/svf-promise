@@ -126,14 +126,14 @@ int main(int argc, char ** argv) {
 	/// Build Program Assignment Graph (PAG)
 		PAGBuilder builder;
 		PAG *pag = builder.build(svfModule);
-		pag->dump("pag");
+		// pag->dump("pag");
 
 		/// Create Andersen's pointer analysis
 		Andersen *ander = AndersenWaveDiff::createAndersenWaveDiff(pag);
 
 		/// ICFG
 		ICFG *icfg = pag->getICFG();
-		icfg->dump("icfg");
+		// icfg->dump("icfg");
 
 
 		// traverse ICFG
@@ -228,10 +228,15 @@ int main(int argc, char ** argv) {
 			auto &thread_name=current_thread.first;
 			auto &nodes=current_thread.second;
 
-			bool thread_waiting=true;	//the BFS of this thread can't proceed
+			
 
 			while(true){
 				auto m=nodes.size();
+				if(m==0){
+					break;
+				}
+				
+				bool thread_waiting=true;	//the BFS of this thread can't proceed
 
 				for(int j=0;j<m;++j){
 					auto i_node=nodes.front();
@@ -250,6 +255,7 @@ int main(int argc, char ** argv) {
 									else{
 										promise_status[promise]=1;
 										has_progress=true;
+										
 									}
 								}
 								break;
