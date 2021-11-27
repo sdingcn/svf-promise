@@ -33,6 +33,7 @@
 #include "SVF-FE/PAGBuilder.h"
 #include <unordered_map>
 #include <vector>
+#include <queue>
 #include <iostream>
 #include <fstream>
 
@@ -40,14 +41,52 @@ using namespace SVF;
 using namespace llvm;
 using namespace std;
 
-std::unordered_map<string,std::map<int,string>> all_thread;
 
-enum instruction_type{
+enum struct instruction_type{
 	put,
 	get,
 	fthread,
 	other
 };
+
+struct instruction {
+	instruction_type label; // "put" or "get"
+	std::vector<int> points_to_set; // promises referenced by "put" or "get"
+	Value *thread_func;
+};
+
+std::ostream& operator<<(std::ostream& os, const instruction& obj){
+    switch (obj.label)
+	{
+		case instruction_type::put:
+			
+			os<<"put:{";
+			for(auto &it:obj.points_to_set){
+				os<<it<<",";
+			}
+			os<<"}";
+			break;
+		
+		case instruction_type::get:
+			os<<"get:{";
+			for(auto &it:obj.points_to_set){
+				os<<it<<",";
+			}
+			os<<"}";
+			break;
+
+		case instruction_type::fthread:
+			os<<"new_thread:{"<<obj.thread_func->getName().str()<<"}";
+			break;
+
+		default:
+			break;
+	}
+    return os;
+}
+
+std::unordered_map<string,std::map<int,instruction>> all_thread;
+
 
 static llvm::cl::opt<std::string> InputFilename(cl::Positional,
         llvm::cl::desc("<input bitcode>"), llvm::cl::init("-"));
@@ -55,49 +94,21 @@ static llvm::cl::opt<std::string> InputFilename(cl::Positional,
 static llvm::cl::opt<bool> LEAKCHECKER("leak", llvm::cl::init(false),
                                        llvm::cl::desc("Memory Leak Detection"));
 
-/*!
- * An example to print points-to set of an LLVM value
- */
-std::string printPts(PointerAnalysis* pta, Value* val){
 
-    std::string str;
-    raw_string_ostream rawstr(str);
+std::vector<int> point_to_string(PointerAnalysis* pta, Value* val){
 
-    NodeID pNodeId = pta->getPAG()->getValueNode(val);
-
-	if(pNodeId){
-		printf("pag node id is: %d. Points-to information is: \n", pNodeId);
-
-		const NodeBS& pts = pta->getPts(pNodeId);
-		for (NodeBS::iterator ii = pts.begin(), ie = pts.end(); ii != ie; ii++) {
-			rawstr << " " << *ii << " ";
-			// PAGNode* targetObj = pta->getPAG()->getPAGNode(*ii);
-			// if(targetObj->hasValue()){
-			// 	rawstr << "(" <<*targetObj->getValue() << ")\t ";
-			// }
-		}
-	}
-
-
-    return rawstr.str();
-}
-
-std::string point_to_string(PointerAnalysis* pta, Value* val){
-
-    std::string str;
-    raw_string_ostream rawstr(str);
-
+	std::vector<int> rtv;
     NodeID pNodeId = pta->getPAG()->getValueNode(val);
 
 	if(pNodeId){
 		const NodeBS& pts = pta->getPts(pNodeId);
 		for (NodeBS::iterator ii = pts.begin(), ie = pts.end(); ii != ie; ii++) {
-			rawstr << *ii << ",";
+			rtv.push_back(*ii);
 		}
 	}
 
 
-    return rawstr.str();
+    return rtv;
 }
 
 int main(int argc, char ** argv) {
@@ -139,7 +150,7 @@ int main(int argc, char ** argv) {
 				string put = "put";
 				string get = "get";
 				string thread = "start_fthread";
-				instruction_type inst_type = other;
+				instruction_type inst_type = instruction_type::other;
 				if (str.find(put) != std::string::npos)
 				{
 					inst_type = instruction_type::put;
@@ -152,32 +163,34 @@ int main(int argc, char ** argv) {
 				}
 				
 				
-				if (inst_type != other) {
+				if (inst_type != instruction_type::other) {
 					auto operand = inst->getOperand(0);
 
 					string node_thread = node->getFun()->getValue();
 					if(!all_thread.count(node_thread)){
 						// thread not exists in map
-						all_thread[node_thread] = std::map<int,string>();
+						all_thread[node_thread] = {};
 					}
 
-					string points_to = point_to_string(ander,operand);
-					if(points_to.size() > 0){
-						points_to.pop_back();
-					}
-					string new_record;
+					auto points_to = point_to_string(ander,operand);
+					
+					instruction new_record;
 					switch (inst_type)
 					{
-						case 0:
-							new_record = "put:{" + points_to + "}";
+						case instruction_type::put:
+							
+							new_record.label=instruction_type::put;
+							new_record.points_to_set=points_to;
 							break;
 						
-						case 1:
-							new_record = "get:{" + points_to + "}";
+						case instruction_type::get:
+							new_record.label=instruction_type::get;
+							new_record.points_to_set=points_to;
 							break;
 
-						case 2:
-							new_record = "new_thread:{" + operand->getName().str() + "}";
+						case instruction_type::fthread:
+							new_record.label=instruction_type::fthread;
+							new_record.thread_func=operand;
 							break;
 
 						default:
@@ -190,31 +203,146 @@ int main(int argc, char ** argv) {
 			}
 		}
 
-		cout << endl;
-		ofstream myfile;
-  		myfile.open ("thread-info.txt");
-  		
-		for( auto it = all_thread.begin(); it != all_thread.end(); ++it )
-		{
-			string key = it->first;
-			map<int,string> value = it->second;
+	std::map<int,bool> promise_status; // initially, all promises are unset (== 0)
 
-			cout << key << ":: ";
-			myfile << key << ":: ";
+	ICFGNode* node0 = icfg->getICFGNode(0);
+	using workList=queue<const ICFGNode*>;
+	std::queue<std::pair<std::string,workList>> active_threads;
+	std::set<const ICFGNode*> visited;
 
-			for(auto jt = value.begin(); jt != value.end(); ++jt){
-				int stepindex = jt->first;
-				string operation = jt->second;
-				cout << stepindex << "~" << operation << "; ";
-				myfile << stepindex << "~" << operation << "; ";
+	assert(all_thread.count("main")==1);
+	active_threads.emplace("main",workList());
+	active_threads.back().second.push(node0);
+
+	visited.insert(node0);
+
+	bool multi_put=false;
+	while (true){
+		bool has_progress = false;
+
+		int n = active_threads.size();
+		for(int i=0;i<n;++i){
+			auto current_thread = active_threads.front();
+			active_threads.pop();
+
+			auto &thread_name=current_thread.first;
+			auto &nodes=current_thread.second;
+
+			bool thread_waiting=true;	//the BFS of this thread can't proceed
+
+			while(true){
+				auto m=nodes.size();
+
+				for(int j=0;j<m;++j){
+					auto i_node=nodes.front();
+					nodes.pop();
+
+					auto id=i_node->getId();
+					bool blocked_here=false;
+					if(all_thread[thread_name].count(id)){
+						auto &record=all_thread[thread_name][id];
+						switch(record.label){
+							case instruction_type::put:{
+								for(auto promise:record.points_to_set){
+									if(promise_status[promise]==1){
+										multi_put=true;
+									}
+									else{
+										promise_status[promise]=1;
+										has_progress=true;
+									}
+								}
+								break;
+							}
+							case instruction_type::get:{
+								bool can_get=true;
+								for(auto promise:record.points_to_set){
+									if(promise_status[promise]==0){
+										can_get=false;
+									}
+								}
+								if(can_get){
+									has_progress=true;
+								}
+								else{
+									blocked_here=true;
+								}
+								break;
+							}
+							case instruction_type::fthread:{
+								has_progress=true;
+								auto callee=record.thread_func;
+								auto callee_name=callee->getName().str();
+								assert(all_thread.count(callee_name)==1);
+
+								ICFGNode* thread_node=icfg->getFunEntryBlockNode(svfModule->getSVFFunction(dyn_cast<Function>(callee)));
+								if(visited.find(thread_node)==visited.end()){
+									active_threads.emplace(callee_name,workList());
+									active_threads.back().second.push(thread_node);
+									visited.insert(thread_node);
+									break;
+								}
+								
+							}
+							default:
+								break;
+						}
+
+
+					}
+					if(blocked_here){
+						nodes.push(i_node);
+					}
+					else{
+						thread_waiting=false;
+						for(auto it=i_node->OutEdgeBegin(),eit=i_node->OutEdgeEnd();it!=eit;++it){
+							ICFGEdge *edge=*it;
+							ICFGNode *succ_node=edge->getDstNode();
+							if(visited.find(succ_node)==visited.end()){
+								visited.insert(succ_node);
+								nodes.push(succ_node);
+							}
+						}
+					}
+				}
+				if(thread_waiting){
+					break;
+				}
 			}
 
-			cout << endl;
-			myfile << endl;
+			if(!nodes.empty()){
+				active_threads.push(current_thread);
+			}
 		}
 
-		myfile.close();
+		if(n==0){
+			cout << "no deadlock detected" << endl;
+			break;
+		}
 
+		if (!has_progress) { // no thread can proceed in the current round
+			cout << "deadlock detected" << endl;
+			break;
+		}
+	}
+	
+	if(multi_put){
+		cout<<"multiple puts to one promise detected"<<endl;
+	}
+
+	// while (!worklist.empty()) {
+	// 	const ICFGNode* vNode = worklist.pop();
+	// 	for (ICFGNode::const_iterator it = vNode->OutEdgeBegin(), eit =
+	// 			vNode->OutEdgeEnd(); it != eit; ++it) {
+	// 		ICFGEdge* edge = *it;
+	// 		ICFGNode* succNode = edge->getDstNode();
+	// 		if (visited.find(succNode) == visited.end()) {
+	// 			visited.insert(succNode);
+	// 			worklist.push(succNode);
+	// 		}
+	// 	}
+	// }
+		
     return 0;
 }
 
