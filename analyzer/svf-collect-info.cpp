@@ -91,11 +91,8 @@ std::unordered_map<string,std::map<int,instruction>> all_thread;
 static llvm::cl::opt<std::string> InputFilename(cl::Positional,
         llvm::cl::desc("<input bitcode>"), llvm::cl::init("-"));
 
-static llvm::cl::opt<bool> LEAKCHECKER("leak", llvm::cl::init(false),
-                                       llvm::cl::desc("Memory Leak Detection"));
 
-
-std::vector<int> point_to_string(PointerAnalysis* pta, Value* val){
+std::vector<int> point_to_vec(PointerAnalysis* pta, Value* val){
 
 	std::vector<int> rtv;
     NodeID pNodeId = pta->getPAG()->getValueNode(val);
@@ -172,7 +169,7 @@ int main(int argc, char ** argv) {
 						all_thread[node_thread] = {};
 					}
 
-					auto points_to = point_to_string(ander,operand);
+					auto points_to = point_to_vec(ander,operand);
 					
 					instruction new_record;
 					switch (inst_type)
@@ -211,8 +208,8 @@ int main(int argc, char ** argv) {
 	std::set<const ICFGNode*> visited;
 
 	assert(all_thread.count("main")==1);
-	active_threads.emplace("main",workList());
-	active_threads.back().second.push(node0);
+	active_threads.emplace("main",workList({node0}));
+	// active_threads.back().second.push(node0);
 
 	visited.insert(node0);
 
@@ -239,7 +236,7 @@ int main(int argc, char ** argv) {
 				bool thread_waiting=true;	//the BFS of this thread can't proceed
 
 				for(int j=0;j<m;++j){
-					auto i_node=nodes.front();
+					const ICFGNode *i_node=nodes.front();
 					nodes.pop();
 
 					auto id=i_node->getId();
@@ -283,8 +280,8 @@ int main(int argc, char ** argv) {
 
 								ICFGNode* thread_node=icfg->getFunEntryBlockNode(svfModule->getSVFFunction(dyn_cast<Function>(callee)));
 								if(visited.find(thread_node)==visited.end()){
-									active_threads.emplace(callee_name,workList());
-									active_threads.back().second.push(thread_node);
+									active_threads.emplace(callee_name,workList({thread_node}));
+									// active_threads.back().second.push(thread_node);
 									visited.insert(thread_node);
 									break;
 								}
@@ -336,18 +333,6 @@ int main(int argc, char ** argv) {
 		cout<<"multiple puts to one promise detected"<<endl;
 	}
 
-	// while (!worklist.empty()) {
-	// 	const ICFGNode* vNode = worklist.pop();
-	// 	for (ICFGNode::const_iterator it = vNode->OutEdgeBegin(), eit =
-	// 			vNode->OutEdgeEnd(); it != eit; ++it) {
-	// 		ICFGEdge* edge = *it;
-	// 		ICFGNode* succNode = edge->getDstNode();
-	// 		if (visited.find(succNode) == visited.end()) {
-	// 			visited.insert(succNode);
-	// 			worklist.push(succNode);
-	// 		}
-	// 	}
-	// }
 		
     return 0;
 }
